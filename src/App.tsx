@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Globe, Clock, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff } from 'lucide-react';
 import { LighthouseService } from './services/lighthouseService';
+import { LighthouseStorage, LighthouseResult } from './lib/supabase';
+import { HistoryView } from './components/HistoryView';
+import { ComparisonView } from './components/ComparisonView';
 
 interface RouteConfig {
   id: string;
@@ -35,19 +38,19 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0, currentUrl: '' });
   const [currentResult, setCurrentResult] = useState<PerformanceResult | null>(null);
-  const [history, setHistory] = useState<PerformanceResult[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [comparisonResults, setComparisonResults] = useState<LighthouseResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [hasSupabase, setHasSupabase] = useState(false);
 
   useEffect(() => {
-    const savedHistory = localStorage.getItem('lighthouse-history');
-    if (savedHistory) {
-      setHistory(JSON.parse(savedHistory));
-    }
-
     // Check if API key is configured
     setHasApiKey(!!import.meta.env.VITE_PAGESPEED_API_KEY);
+    
+    // Check if Supabase is configured
+    setHasSupabase(!!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
   }, []);
 
   const addCustomRoute = () => {
@@ -141,9 +144,18 @@ function App() {
         results,
       };
 
-      const updatedHistory = [newResult, ...history.slice(0, 9)]; // Keep last 10 results
-      setHistory(updatedHistory);
-      localStorage.setItem('lighthouse-history', JSON.stringify(updatedHistory));
+      // Save to cloud storage
+      try {
+        await LighthouseStorage.saveResult({
+          url: newResult.url,
+          timestamp: newResult.timestamp,
+          routes: newResult.routes,
+          results: newResult.results,
+        });
+      } catch (saveError) {
+        console.error('Failed to save result to cloud storage:', saveError);
+        // Continue with local storage fallback
+      }
       
       setCurrentResult(newResult);
       setStep(4);
@@ -175,13 +187,55 @@ function App() {
     setCurrentResult(null);
     setIsLoading(false);
     setError(null);
+    setShowHistory(false);
+    setShowComparison(false);
+    setComparisonResults([]);
   };
 
-  const loadHistoryResult = (result: PerformanceResult) => {
-    setCurrentResult(result);
+  const loadHistoryResult = (result: LighthouseResult) => {
+    // Convert LighthouseResult to PerformanceResult format
+    const performanceResult: PerformanceResult = {
+      id: result.id,
+      url: result.url,
+      timestamp: result.timestamp,
+      routes: result.routes,
+      results: result.results,
+    };
+    
+    setCurrentResult(performanceResult);
     setShowHistory(false);
     setStep(4);
   };
+
+  const handleCompareResults = (results: LighthouseResult[]) => {
+    setComparisonResults(results);
+    setShowHistory(false);
+    setShowComparison(true);
+  };
+
+  // Show comparison view
+  if (showComparison) {
+    return (
+      <ComparisonView
+        results={comparisonResults}
+        onBack={() => {
+          setShowComparison(false);
+          setShowHistory(true);
+        }}
+      />
+    );
+  }
+
+  // Show history view
+  if (showHistory) {
+    return (
+      <HistoryView
+        onBack={() => setShowHistory(false)}
+        onLoadResult={loadHistoryResult}
+        onCompareResults={handleCompareResults}
+      />
+    );
+  }
 
   // API Key Setup Notice
   if (!hasApiKey && step === 1) {
@@ -194,98 +248,60 @@ function App() {
                 <div className="p-4 bg-yellow-100 rounded-2xl w-fit mx-auto mb-4">
                   <AlertCircle className="h-8 w-8 text-yellow-600" />
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">API Configuration Required</h1>
-                <p className="text-gray-600">To get real Lighthouse results, you need to configure the PageSpeed Insights API.</p>
+                <h1 className="text-2xl font-bold text-gray-900 mb-2">API Configuration</h1>
+                <p className="text-gray-600">Configure your APIs for the best experience.</p>
               </div>
 
               <div className="space-y-6">
                 <div className="bg-blue-50 rounded-lg p-6">
-                  <h3 className="font-semibold text-blue-900 mb-3">Setup Instructions:</h3>
-                  <ol className="list-decimal list-inside space-y-2 text-blue-800">
+                  <h3 className="font-semibold text-blue-900 mb-3">PageSpeed Insights API (Optional):</h3>
+                  <ol className="list-decimal list-inside space-y-2 text-blue-800 text-sm">
                     <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Console</a></li>
-                    <li>Create a new project or select an existing one</li>
                     <li>Enable the PageSpeed Insights API</li>
-                    <li>Create an API key in the Credentials section</li>
-                    <li>Add the API key as <code className="bg-blue-100 px-2 py-1 rounded">VITE_PAGESPEED_API_KEY</code> to your environment</li>
+                    <li>Create an API key and add as <code className="bg-blue-100 px-2 py-1 rounded">VITE_PAGESPEED_API_KEY</code></li>
                   </ol>
                 </div>
 
+                {!hasSupabase && (
+                  <div className="bg-purple-50 rounded-lg p-6">
+                    <h3 className="font-semibold text-purple-900 mb-3">Supabase Database (Recommended):</h3>
+                    <p className="text-purple-800 text-sm mb-3">
+                      For cloud storage and sharing test results across users.
+                    </p>
+                    <button
+                      onClick={() => window.open('https://bolt.new/setup/supabase', '_blank')}
+                      className="text-purple-700 underline text-sm hover:text-purple-800"
+                    >
+                      Click here to set up Supabase →
+                    </button>
+                  </div>
+                )}
+
                 <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="font-semibold text-gray-900 mb-3">Alternative Options:</h3>
-                  <ul className="space-y-2 text-gray-700">
-                    <li>• Continue with demo mode (mock data)</li>
-                    <li>• Set up your own Lighthouse server</li>
-                    <li>• Use Lighthouse CI for automated testing</li>
-                  </ul>
+                  <h3 className="font-semibold text-gray-900 mb-3">Current Status:</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center space-x-2">
+                      {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-gray-400" />}
+                      <span className={hasApiKey ? 'text-green-700' : 'text-gray-600'}>
+                        PageSpeed API: {hasApiKey ? 'Connected' : 'Demo mode'}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {hasSupabase ? <Database className="h-4 w-4 text-green-600" /> : <Database className="h-4 w-4 text-gray-400" />}
+                      <span className={hasSupabase ? 'text-green-700' : 'text-gray-600'}>
+                        Cloud Storage: {hasSupabase ? 'Connected' : 'Local only'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <button
                   onClick={() => setHasApiKey(true)}
                   className="w-full bg-indigo-600 text-white py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors"
                 >
-                  Continue with Demo Mode
+                  Continue with Current Setup
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (showHistory) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-        <div className="container mx-auto px-4 py-8">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center space-x-3">
-                <div className="p-3 bg-indigo-100 rounded-xl">
-                  <History className="h-6 w-6 text-indigo-600" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">Test History</h1>
-                  <p className="text-gray-600">View your previous performance tests</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-              >
-                Back to Tool
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {history.length === 0 ? (
-                <div className="text-center py-12">
-                  <History className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No test history</h3>
-                  <p className="text-gray-600">Run your first performance test to see results here.</p>
-                </div>
-              ) : (
-                history.map((result) => (
-                  <div
-                    key={result.id}
-                    onClick={() => loadHistoryResult(result)}
-                    className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-gray-900 mb-1">{result.url}</h3>
-                        <p className="text-sm text-gray-600">
-                          {new Date(result.timestamp).toLocaleDateString()} at{' '}
-                          {new Date(result.timestamp).toLocaleTimeString()}
-                        </p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {result.routes.length} route{result.routes.length !== 1 ? 's' : ''} tested
-                        </p>
-                      </div>
-                      <ChevronRight className="h-5 w-5 text-gray-400" />
-                    </div>
-                  </div>
-                ))
-              )}
             </div>
           </div>
         </div>
@@ -315,9 +331,15 @@ function App() {
           {loadingProgress.currentUrl && (
             <p className="text-sm text-gray-500 mb-4">Current: {loadingProgress.currentUrl}</p>
           )}
-          <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
-            {hasApiKey ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-            <span>{hasApiKey ? 'Using PageSpeed Insights API' : 'Using demo data'}</span>
+          <div className="flex items-center justify-center space-x-4 text-sm text-gray-500">
+            <div className="flex items-center space-x-2">
+              {hasApiKey ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+              <span>{hasApiKey ? 'Real API' : 'Demo data'}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {hasSupabase ? <Database className="h-4 w-4" /> : <Database className="h-4 w-4 text-gray-400" />}
+              <span>{hasSupabase ? 'Cloud storage' : 'Local only'}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -373,13 +395,19 @@ function App() {
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">Performance Results</h1>
-                  <p className="text-gray-600 flex items-center space-x-2">
+                  <div className="flex items-center space-x-4 text-gray-600">
                     <span>{currentResult.url}</span>
-                    {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-gray-400" />}
-                    <span className="text-sm">
-                      {hasApiKey ? 'Real data' : 'Demo data'}
-                    </span>
-                  </p>
+                    <div className="flex items-center space-x-4 text-sm">
+                      <div className="flex items-center space-x-1">
+                        {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-gray-400" />}
+                        <span>{hasApiKey ? 'Real data' : 'Demo data'}</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        {hasSupabase ? <Database className="h-4 w-4 text-green-600" /> : <Database className="h-4 w-4 text-gray-400" />}
+                        <span>{hasSupabase ? 'Saved to cloud' : 'Local only'}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <button
@@ -485,17 +513,23 @@ function App() {
             <p className="text-xl text-gray-600 max-w-2xl mx-auto">
               Analyze your website's performance, accessibility, best practices, and SEO with comprehensive Lighthouse audits.
             </p>
-            <div className="flex items-center justify-center space-x-4 mt-4">
+            <div className="flex items-center justify-center space-x-6 mt-6">
               <button
                 onClick={() => setShowHistory(true)}
-                className="inline-flex items-center space-x-2 text-indigo-600 hover:text-indigo-700"
+                className="inline-flex items-center space-x-2 text-indigo-600 hover:text-indigo-700 transition-colors"
               >
                 <History className="h-4 w-4" />
                 <span>View Test History</span>
               </button>
-              <div className="flex items-center space-x-2 text-sm text-gray-500">
-                {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4" />}
-                <span>{hasApiKey ? 'Real API Connected' : 'Demo Mode'}</span>
+              <div className="flex items-center space-x-4 text-sm text-gray-500">
+                <div className="flex items-center space-x-2">
+                  {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4" />}
+                  <span>{hasApiKey ? 'Real API' : 'Demo Mode'}</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  {hasSupabase ? <Database className="h-4 w-4 text-green-600" /> : <Database className="h-4 w-4 text-gray-400" />}
+                  <span>{hasSupabase ? 'Cloud Storage' : 'Local Only'}</span>
+                </div>
               </div>
             </div>
           </div>
