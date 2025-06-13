@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff, Download } from 'lucide-react';
+import { Globe, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff, Download, Monitor, Smartphone } from 'lucide-react';
 import { LighthouseService } from './services/lighthouseService';
 import { LighthouseStorage, LighthouseResult } from './lib/supabase';
 import { HistoryView } from './components/HistoryView';
 import { ComparisonView } from './components/ComparisonView';
+import { LoadingSpinner } from './components/LoadingSpinner';
 
 interface RouteConfig {
   id: string;
@@ -28,6 +29,8 @@ interface PerformanceResult {
       fid: number;
     };
   };
+  strategy?: 'mobile' | 'desktop';
+  fullApiResults?: Record<string, any>;
 }
 
 function App() {
@@ -35,6 +38,7 @@ function App() {
   const [baseUrl, setBaseUrl] = useState('');
   const [routeType, setRouteType] = useState<'all' | 'custom'>('all');
   const [customRoutes, setCustomRoutes] = useState<RouteConfig[]>([]);
+  const [strategy, setStrategy] = useState<'mobile' | 'desktop'>('mobile');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0, currentUrl: '' });
   const [currentResult, setCurrentResult] = useState<PerformanceResult | null>(null);
@@ -112,8 +116,36 @@ function App() {
     setCustomRoutes(customRoutes.filter(route => route.id !== id));
   };
 
+  const downloadFullResults = () => {
+    if (!currentResult || !fullApiResults) return;
+
+    const downloadData = {
+      testInfo: {
+        url: currentResult.url,
+        timestamp: currentResult.timestamp,
+        strategy: currentResult.strategy || strategy,
+        routes: currentResult.routes,
+      },
+      summary: currentResult.results,
+      fullApiResults: fullApiResults,
+    };
+
+    const blob = new Blob([JSON.stringify(downloadData, null, 2)], {
+      type: 'application/json',
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lighthouse-results-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const runPerformanceTest = async () => {
-    console.log('Running performance test with base URL:', baseUrl);
+    console.log('Running performance test with base URL:', baseUrl, 'Strategy:', strategy);
     setIsLoading(true);
     setError(null);
     
@@ -125,31 +157,42 @@ function App() {
       setLoadingProgress({ current: 0, total: routes.length, currentUrl: '' });
 
       const results: PerformanceResult['results'] = {};
+      const apiResults: Record<string, any> = {};
       
       if (hasApiKey) {
         // Use real PageSpeed Insights API
-        const routePaths = routes.map(route => route.path);
-        const apiResults = await LighthouseService.analyzeMultipleUrls(baseUrl, routePaths);
-        
-        // Map API results to our format
-        routes.forEach((route, index) => {
+        for (let i = 0; i < routes.length; i++) {
+          const route = routes[i];
           setLoadingProgress({ 
-            current: index + 1, 
+            current: i + 1, 
             total: routes.length, 
             currentUrl: `${baseUrl}${route.path}` 
           });
           
-          results[route.path] = apiResults[route.path] || {
-            performance: 0,
-            accessibility: 0,
-            bestPractices: 0,
-            seo: 0,
-            fcp: 0,
-            lcp: 0,
-            cls: 0,
-            fid: 0,
-          };
-        });
+          try {
+            const fullUrl = `${baseUrl.replace(/\/$/, '')}${route.path}`;
+            const { metrics, fullData } = await LighthouseService.analyzeUrlWithFullData(fullUrl, strategy);
+            results[route.path] = metrics;
+            apiResults[route.path] = fullData;
+            
+            // Add delay between requests to respect rate limits
+            if (i < routes.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } catch (error) {
+            console.error(`Failed to analyze ${route.path}:`, error);
+            results[route.path] = {
+              performance: 0,
+              accessibility: 0,
+              bestPractices: 0,
+              seo: 0,
+              fcp: 0,
+              lcp: 0,
+              cls: 0,
+              fid: 0,
+            };
+          }
+        }
       } else {
         // Fallback to mock data with realistic delay
         for (let i = 0; i < routes.length; i++) {
@@ -182,7 +225,11 @@ function App() {
         timestamp: Date.now(),
         routes,
         results,
+        strategy,
+        fullApiResults: apiResults,
       };
+
+      setFullApiResults(apiResults);
 
       // Save to cloud storage with proper error handling
       try {
@@ -234,6 +281,7 @@ function App() {
     setShowHistory(false);
     setShowComparison(false);
     setComparisonResults([]);
+    setFullApiResults({});
   };
 
   const loadHistoryResult = (result: LighthouseResult) => {
@@ -377,50 +425,11 @@ function App() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-8 max-w-md mx-auto">
-          <div className="text-center">
-            <div className="relative mb-6">
-              <div className="w-12 h-12 mx-auto">
-                <div className="absolute inset-0 border-3 border-indigo-200 rounded-full"></div>
-                <div className="absolute inset-0 border-3 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-              </div>
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              {hasApiKey ? 'Running Lighthouse Analysis' : 'Running Performance Analysis'}
-            </h3>
-            <p className="text-gray-600 mb-4">
-              {loadingProgress.total > 0 
-                ? `Analyzing ${loadingProgress.current} of ${loadingProgress.total} routes...`
-                : 'This may take a few moments...'
-              }
-            </p>
-            {loadingProgress.currentUrl && (
-              <p className="text-sm text-gray-500 mb-4 truncate">
-                <span className="font-medium">Current:</span> {loadingProgress.currentUrl}
-              </p>
-            )}
-            {loadingProgress.total > 0 && (
-              <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
-                <div 
-                  className="bg-indigo-600 h-2 rounded-full transition-all duration-300" 
-                  style={{ width: `${(loadingProgress.current / loadingProgress.total) * 100}%` }}
-                ></div>
-              </div>
-            )}
-            <div className="flex items-center justify-center space-x-4 text-xs text-gray-500">
-              <div className="flex items-center space-x-1">
-                {hasApiKey ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-                <span>{hasApiKey ? 'Real API' : 'Demo data'}</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                {hasSupabase ? <Database className="h-3 w-3" /> : <Database className="h-3 w-3 text-gray-400" />}
-                <span>{hasSupabase ? 'Cloud storage' : 'Local only'}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <LoadingSpinner 
+        hasApiKey={hasApiKey}
+        hasSupabase={hasSupabase}
+        loadingProgress={loadingProgress}
+      />
     );
   }
 
@@ -477,6 +486,10 @@ function App() {
                     <span>{currentResult.url}</span>
                     <div className="flex items-center space-x-4 text-sm">
                       <div className="flex items-center space-x-1">
+                        {currentResult.strategy === 'mobile' ? <Smartphone className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
+                        <span className="capitalize">{currentResult.strategy || strategy}</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
                         {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-gray-400" />}
                         <span>{hasApiKey ? 'Real data' : 'Demo data'}</span>
                       </div>
@@ -489,6 +502,15 @@ function App() {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
+                {hasApiKey && Object.keys(fullApiResults).length > 0 && (
+                  <button
+                    onClick={downloadFullResults}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download Full Results</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setShowHistory(true)}
                   className="inline-flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
@@ -685,16 +707,57 @@ function App() {
               </div>
             )}
 
-            {/* Step 2: Choose Route Type */}
+            {/* Step 2: Choose Route Type and Strategy */}
             {step === 2 && (
               <div className="space-y-6">
                 <div className="text-center mb-8">
                   <Database className="h-12 w-12 text-indigo-600 mx-auto mb-4" />
-                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Select Routes to Test</h2>
-                  <p className="text-gray-600">Choose whether to test all routes or specific custom routes.</p>
+                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Configure Test Settings</h2>
+                  <p className="text-gray-600">Choose your test strategy and routes to analyze.</p>
                 </div>
 
+                {/* Strategy Selection */}
                 <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Test Strategy</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div
+                      onClick={() => setStrategy('mobile')}
+                      className={`p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                        strategy === 'mobile'
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <Smartphone className={`h-6 w-6 ${strategy === 'mobile' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Mobile</h4>
+                          <p className="text-sm text-gray-600">Test mobile performance</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setStrategy('desktop')}
+                      className={`p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                        strategy === 'desktop'
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <Monitor className={`h-6 w-6 ${strategy === 'desktop' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Desktop</h4>
+                          <p className="text-sm text-gray-600">Test desktop performance</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Route Selection */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Routes to Test</h3>
                   <div
                     onClick={() => setRouteType('all')}
                     className={`p-6 border-2 rounded-xl cursor-pointer transition-colors ${
