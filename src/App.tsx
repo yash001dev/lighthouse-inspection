@@ -154,6 +154,8 @@ function App() {
         ? [{ id: '1', path: '/', name: 'Home Page' }]
         : customRoutes.filter(route => route.path.trim());
       console.log('Running performance test for routes:', routes);
+      
+      // Initialize progress with 0 current progress
       setLoadingProgress({ current: 0, total: routes.length, currentUrl: '' });
 
       const results: PerformanceResult['results'] = {};
@@ -164,7 +166,7 @@ function App() {
         for (let i = 0; i < routes.length; i++) {
           const route = routes[i];
           setLoadingProgress({ 
-            current: i + 1, 
+            current: i, // Start with current route index (0-based)
             total: routes.length, 
             currentUrl: `${baseUrl}${route.path}` 
           });
@@ -174,6 +176,13 @@ function App() {
             const { metrics, fullData } = await LighthouseService.analyzeUrlWithFullData(fullUrl, strategy);
             results[route.path] = metrics;
             apiResults[route.path] = fullData;
+            
+            // Update progress after completion
+            setLoadingProgress({ 
+              current: i + 1, 
+              total: routes.length, 
+              currentUrl: `${baseUrl}${route.path}` 
+            });
             
             // Add delay between requests to respect rate limits
             if (i < routes.length - 1) {
@@ -191,6 +200,13 @@ function App() {
               cls: 0,
               fid: 0,
             };
+            
+            // Still update progress even on error
+            setLoadingProgress({ 
+              current: i + 1, 
+              total: routes.length, 
+              currentUrl: `${baseUrl}${route.path}` 
+            });
           }
         }
       } else {
@@ -198,7 +214,7 @@ function App() {
         for (let i = 0; i < routes.length; i++) {
           const route = routes[i];
           setLoadingProgress({ 
-            current: i + 1, 
+            current: i, // Start with current route index
             total: routes.length, 
             currentUrl: `${baseUrl}${route.path}` 
           });
@@ -216,6 +232,13 @@ function App() {
             cls: Math.random() * 0.1,
             fid: Math.random() * 50 + 50,
           };
+          
+          // Update progress after completion
+          setLoadingProgress({ 
+            current: i + 1, 
+            total: routes.length, 
+            currentUrl: `${baseUrl}${route.path}` 
+          });
         }
       }
 

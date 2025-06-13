@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { History, ChevronRight, Globe, Calendar, BarChart3, ArrowLeft, Filter, Search } from 'lucide-react';
 import { LighthouseStorage, LighthouseResult } from '../lib/supabase';
+import { LoadingSpinner } from './LoadingSpinner';
 
 interface HistoryViewProps {
   onBack: () => void;
@@ -106,15 +107,13 @@ export function HistoryView({ onBack, onLoadResult, onCompareResults }: HistoryV
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 mx-auto mb-4">
-            <div className="absolute inset-0 border-4 border-indigo-200 rounded-full"></div>
-            <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-          </div>
-          <p className="text-gray-600">Loading test history...</p>
-        </div>
-      </div>
+      <LoadingSpinner 
+        hasApiKey={true}
+        hasSupabase={true}
+        loadingProgress={{ current: 0, total: 0, currentUrl: 'Loading test history...' }}
+        customMessage="Loading Test History"
+        customDescription="Fetching your saved performance test results..."
+      />
     );
   }
 
