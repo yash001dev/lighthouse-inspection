@@ -51,10 +51,10 @@ export class LighthouseService {
     });
 
     // Add each category as a separate parameter
-    params.append('category', 'performance');
-    params.append('category', 'accessibility');
-    params.append('category', 'best-practices');
-    params.append('category', 'seo');
+    params.append("category", "performance");
+    params.append("category", "accessibility");
+    params.append("category", "best-practices");
+    params.append("category", "seo");
 
     try {
       console.log(`Fetching PageSpeed data for: ${url}?${params}`);
@@ -196,5 +196,54 @@ export class LighthouseService {
 
   private static delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  static async analyzeUrlWithFullData(
+    url: string,
+    strategy: "mobile" | "desktop" = "mobile"
+  ): Promise<{ metrics: LighthouseMetrics; fullData: PageSpeedResponse }> {
+    if (!this.API_KEY) {
+      console.error(
+        "PageSpeed Insights API key is required. Please add VITE_PAGESPEED_API_KEY to your environment variables."
+      );
+      throw new Error(
+        "PageSpeed Insights API key is required. Please add VITE_PAGESPEED_API_KEY to your environment variables."
+      );
+    }
+
+    const params = new URLSearchParams({
+      url: url,
+      key: this.API_KEY,
+      strategy: strategy,
+    });
+
+    // Add each category as a separate parameter
+    params.append("category", "performance");
+    params.append("category", "accessibility");
+    params.append("category", "best-practices");
+    params.append("category", "seo");
+
+    try {
+      console.log(`Fetching PageSpeed data for: ${url}?${params}`);
+      const response = await fetch(`${this.BASE_URL}?${params}`);
+
+      if (!response.ok) {
+        throw new Error(
+          `PageSpeed API error: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data: PageSpeedResponse = await response.json();
+
+      return {
+        metrics: this.parsePageSpeedResults(data),
+        fullData: data,
+      };
+    } catch (error) {
+      console.error("Error fetching PageSpeed data:", error);
+      throw new Error(
+        "Failed to analyze page performance. Please check the URL and try again."
+      );
+    }
   }
 }

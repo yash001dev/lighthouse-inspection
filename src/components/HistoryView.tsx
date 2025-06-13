@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { History, ChevronRight, Globe, Calendar, BarChart3, ArrowLeft, Filter, Search } from 'lucide-react';
 import { LighthouseStorage, LighthouseResult } from '../lib/supabase';
 
@@ -17,26 +17,41 @@ export function HistoryView({ onBack, onLoadResult, onCompareResults }: HistoryV
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
   const [compareMode, setCompareMode] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [selectedDomain]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      console.log('Loading history data...');
+      
       const [allDomains, domainResults] = await Promise.all([
         LighthouseStorage.getAllDomains(),
         LighthouseStorage.getResultsByDomain(selectedDomain || undefined)
       ]);
       
+      console.log('Loaded domains:', allDomains);
+      console.log('Loaded results:', domainResults.length);
+      
       setDomains(allDomains);
       setResults(domainResults);
+      
+      // If no database results but localStorage might have data, show a message
+      if (domainResults.length === 0) {
+        const localHistory = localStorage.getItem('lighthouse-history');
+        if (localHistory) {
+          const localResults = JSON.parse(localHistory);
+          console.log('Found localStorage data that needs migration:', localResults.length);
+        }
+      }
+      
     } catch (error) {
       console.error('Error loading history data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDomain]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const filteredResults = results.filter(result => {
     if (!searchTerm) return true;

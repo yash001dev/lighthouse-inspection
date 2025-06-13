@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, Clock, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff } from 'lucide-react';
+import { Globe, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff, Download } from 'lucide-react';
 import { LighthouseService } from './services/lighthouseService';
 import { LighthouseStorage, LighthouseResult } from './lib/supabase';
 import { HistoryView } from './components/HistoryView';
@@ -14,7 +14,7 @@ interface RouteConfig {
 interface PerformanceResult {
   id: string;
   url: string;
-  timestamp: number;
+  timestamp: number | string;
   routes: RouteConfig[];
   results: {
     [route: string]: {
@@ -44,14 +44,54 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [hasSupabase, setHasSupabase] = useState(false);
+  const [fullApiResults, setFullApiResults] = useState<Record<string, any>>({});
 
   useEffect(() => {
     // Check if API key is configured
     setHasApiKey(!!import.meta.env.VITE_PAGESPEED_API_KEY);
-    
     // Check if Supabase is configured
     setHasSupabase(!!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
+    
+    // Test database connection and migrate data if needed
+    migrateLocalStorageData();
   }, []);
+
+  const migrateLocalStorageData = async () => {
+    try {
+      // Test database connection
+      const connectionResult = await LighthouseStorage.testConnection();
+      console.log('Database connection status:', connectionResult);
+      
+      if (connectionResult.success) {
+        // Check if we have localStorage data to migrate
+        const localHistory = localStorage.getItem('lighthouse-history');
+        if (localHistory) {
+          const localResults = JSON.parse(localHistory);
+          console.log('Found localStorage data:', localResults.length, 'results');
+          
+          // Migrate each result to database
+          for (const result of localResults) {
+            try {
+              await LighthouseStorage.saveResult({
+                url: result.url,
+                timestamp: result.timestamp,
+                routes: result.routes,
+                results: result.results,
+              });
+            } catch (error) {
+              console.error('Failed to migrate result:', error);
+            }
+          }
+          
+          console.log('Data migration completed');
+          // Clear localStorage after successful migration
+          localStorage.removeItem('lighthouse-history');
+        }
+      }
+    } catch (error) {
+      console.error('Migration failed:', error);
+    }
+  };
 
   const addCustomRoute = () => {
     const newRoute: RouteConfig = {
@@ -144,17 +184,21 @@ function App() {
         results,
       };
 
-      // Save to cloud storage
+      // Save to cloud storage with proper error handling
       try {
-        await LighthouseStorage.saveResult({
+        const savedResult = await LighthouseStorage.saveResult({
           url: newResult.url,
           timestamp: newResult.timestamp,
           routes: newResult.routes,
           results: newResult.results,
         });
+        
+        if (savedResult) {
+          console.log('Successfully saved to database:', savedResult);
+        }
       } catch (saveError) {
         console.error('Failed to save result to cloud storage:', saveError);
-        // Continue with local storage fallback
+        setError('Warning: Results saved locally only. Database connection failed.');
       }
       
       setCurrentResult(newResult);
@@ -293,6 +337,28 @@ function App() {
                       </span>
                     </div>
                   </div>
+                  
+                  {hasSupabase && (
+                    <div className="mt-4">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const result = await LighthouseStorage.testConnection();
+                            if (result.success) {
+                              alert('Database connected successfully!');
+                            } else {
+                              alert(`Database connection failed: ${result.error}`);
+                            }
+                          } catch (error) {
+                            alert('Database test failed: ' + error);
+                          }
+                        }}
+                        className="text-xs bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded transition-colors"
+                      >
+                        Test Database Connection
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -312,33 +378,45 @@ function App() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="relative">
-            <div className="w-20 h-20 mx-auto mb-6">
-              <div className="absolute inset-0 border-4 border-indigo-200 rounded-full"></div>
-              <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-8 max-w-md mx-auto">
+          <div className="text-center">
+            <div className="relative mb-6">
+              <div className="w-12 h-12 mx-auto">
+                <div className="absolute inset-0 border-3 border-indigo-200 rounded-full"></div>
+                <div className="absolute inset-0 border-3 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+              </div>
             </div>
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            {hasApiKey ? 'Running Real Lighthouse Analysis' : 'Running Performance Analysis'}
-          </h2>
-          <p className="text-gray-600 mb-4">
-            {loadingProgress.total > 0 
-              ? `Analyzing ${loadingProgress.current} of ${loadingProgress.total} routes...`
-              : 'This may take a few moments...'
-            }
-          </p>
-          {loadingProgress.currentUrl && (
-            <p className="text-sm text-gray-500 mb-4">Current: {loadingProgress.currentUrl}</p>
-          )}
-          <div className="flex items-center justify-center space-x-4 text-sm text-gray-500">
-            <div className="flex items-center space-x-2">
-              {hasApiKey ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-              <span>{hasApiKey ? 'Real API' : 'Demo data'}</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              {hasSupabase ? <Database className="h-4 w-4" /> : <Database className="h-4 w-4 text-gray-400" />}
-              <span>{hasSupabase ? 'Cloud storage' : 'Local only'}</span>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {hasApiKey ? 'Running Lighthouse Analysis' : 'Running Performance Analysis'}
+            </h3>
+            <p className="text-gray-600 mb-4">
+              {loadingProgress.total > 0 
+                ? `Analyzing ${loadingProgress.current} of ${loadingProgress.total} routes...`
+                : 'This may take a few moments...'
+              }
+            </p>
+            {loadingProgress.currentUrl && (
+              <p className="text-sm text-gray-500 mb-4 truncate">
+                <span className="font-medium">Current:</span> {loadingProgress.currentUrl}
+              </p>
+            )}
+            {loadingProgress.total > 0 && (
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
+                <div 
+                  className="bg-indigo-600 h-2 rounded-full transition-all duration-300" 
+                  style={{ width: `${(loadingProgress.current / loadingProgress.total) * 100}%` }}
+                ></div>
+              </div>
+            )}
+            <div className="flex items-center justify-center space-x-4 text-xs text-gray-500">
+              <div className="flex items-center space-x-1">
+                {hasApiKey ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                <span>{hasApiKey ? 'Real API' : 'Demo data'}</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                {hasSupabase ? <Database className="h-3 w-3" /> : <Database className="h-3 w-3 text-gray-400" />}
+                <span>{hasSupabase ? 'Cloud storage' : 'Local only'}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -410,12 +488,21 @@ function App() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={resetTool}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-              >
-                New Test
-              </button>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowHistory(true)}
+                  className="inline-flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <History className="h-4 w-4" />
+                  <span>View History</span>
+                </button>
+                <button
+                  onClick={resetTool}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  New Test
+                </button>
+              </div>
             </div>
 
             {/* Overall Scores */}
