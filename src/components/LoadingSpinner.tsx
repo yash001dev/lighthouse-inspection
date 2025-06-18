@@ -11,6 +11,7 @@ interface LoadingSpinnerProps {
   };
   customMessage?: string;
   customDescription?: string;
+  analysisMethod?: 'pagespeed' | 'lighthouse';
 }
 
 export function LoadingSpinner({ 
@@ -18,7 +19,8 @@ export function LoadingSpinner({
   hasSupabase, 
   loadingProgress, 
   customMessage,
-  customDescription 
+  customDescription,
+  analysisMethod = 'pagespeed'
 }: LoadingSpinnerProps) {
   const metrics = [
     { icon: Zap, label: 'Performance', color: 'text-blue-500' },
@@ -137,10 +139,15 @@ export function LoadingSpinner({
           {!customMessage && (
             <div className="flex items-center justify-center space-x-6 text-xs text-gray-500 mb-6">
               <div className="flex items-center space-x-2">
-                {hasApiKey ? (
+                {analysisMethod === 'lighthouse' ? (
+                  <div className="flex items-center space-x-1">
+                    <Zap className="h-4 w-4 text-indigo-500" />
+                    <span className="text-indigo-600 font-medium">Direct Lighthouse</span>
+                  </div>
+                ) : hasApiKey ? (
                   <div className="flex items-center space-x-1">
                     <Wifi className="h-4 w-4 text-green-500" />
-                    <span className="text-green-600 font-medium">Real API Data</span>
+                    <span className="text-green-600 font-medium">PageSpeed Insights</span>
                   </div>
                 ) : (
                   <div className="flex items-center space-x-1">

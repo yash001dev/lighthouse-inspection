@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff, Download, Monitor, Smartphone } from 'lucide-react';
+import { Globe, Zap, Eye, Database, ChevronRight, BarChart3, History, Plus, X, CheckCircle2, AlertCircle, Play, Wifi, WifiOff, Download, Monitor, Smartphone, Activity, ExternalLink } from 'lucide-react';
 import { LighthouseService } from './services/lighthouseService';
+import { DirectLighthouseService, DetailedLighthouseResult } from './services/directLighthouseService';
 import { LighthouseStorage, LighthouseResult } from './lib/supabase';
 import { HistoryView } from './components/HistoryView';
 import { ComparisonView } from './components/ComparisonView';
+import { CoreWebVitalsAnalysis } from './components/CoreWebVitalsAnalysis';
 import { LoadingSpinner } from './components/LoadingSpinner';
+import { PageSpeedResults } from './components/PageSpeedResults';
+import { DirectLighthouseResults } from './components/DirectLighthouseResults';
 
 interface RouteConfig {
   id: string;
@@ -27,10 +31,13 @@ interface PerformanceResult {
       lcp: number;
       cls: number;
       fid: number;
+      tbt: number;
+      si: number;
     };
   };
   strategy?: 'mobile' | 'desktop';
-  fullApiResults?: Record<string, any>;
+  fullApiResults?: Record<string, unknown>;
+  pageSpeedInsightsUrls?: Record<string, string>; // route -> PSI URL mapping
 }
 
 function App() {
@@ -39,16 +46,21 @@ function App() {
   const [routeType, setRouteType] = useState<'all' | 'custom'>('all');
   const [customRoutes, setCustomRoutes] = useState<RouteConfig[]>([]);
   const [strategy, setStrategy] = useState<'mobile' | 'desktop'>('mobile');
+  const [analysisMethod, setAnalysisMethod] = useState<'pagespeed' | 'lighthouse'>('pagespeed');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ current: 0, total: 0, currentUrl: '' });
   const [currentResult, setCurrentResult] = useState<PerformanceResult | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
+  const [showCoreWebVitals, setShowCoreWebVitals] = useState(false);
   const [comparisonResults, setComparisonResults] = useState<LighthouseResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [hasSupabase, setHasSupabase] = useState(false);
-  const [fullApiResults, setFullApiResults] = useState<Record<string, any>>({});
+  const [fullApiResults, setFullApiResults] = useState<Record<string, unknown>>({});
+  const [directLighthouseResult, setDirectLighthouseResult] = useState<{ result: DetailedLighthouseResult; url: string; strategy: 'mobile' | 'desktop'; timestamp: string } | null>(null);
+  const [showPageSpeedResults, setShowPageSpeedResults] = useState(false);
+  const [showDirectLighthouseResults, setShowDirectLighthouseResults] = useState(false);
 
   useEffect(() => {
     // Check if API key is configured
@@ -145,7 +157,7 @@ function App() {
   };
 
   const runPerformanceTest = async () => {
-    console.log('Running performance test with base URL:', baseUrl, 'Strategy:', strategy);
+    console.log('Running performance test with base URL:', baseUrl, 'Strategy:', strategy, 'Method:', analysisMethod);
     setIsLoading(true);
     setError(null);
     
@@ -159,9 +171,74 @@ function App() {
       setLoadingProgress({ current: 0, total: routes.length, currentUrl: '' });
 
       const results: PerformanceResult['results'] = {};
-      const apiResults: Record<string, any> = {};
+      const apiResults: Record<string, unknown> = {};
+      const pageSpeedInsightsUrls: Record<string, string> = {};
       
-      if (hasApiKey) {
+      if (analysisMethod === 'lighthouse') {
+        // Use Direct Lighthouse Analysis
+        const isServerHealthy = await DirectLighthouseService.checkServerHealth();
+        if (!isServerHealthy) {
+          throw new Error('Lighthouse server is not running. Please start the server at http://localhost:3001');
+        }
+
+        for (let i = 0; i < routes.length; i++) {
+          const route = routes[i];
+          setLoadingProgress({ 
+            current: i,
+            total: routes.length, 
+            currentUrl: `${baseUrl}${route.path}` 
+          });
+          
+          try {
+            const fullUrl = `${baseUrl.replace(/\/$/, '')}${route.path}`;
+            const lighthouseResult = await DirectLighthouseService.runLighthouseAnalysis(fullUrl, strategy);
+            results[route.path] = lighthouseResult.metrics;
+            apiResults[route.path] = lighthouseResult.fullReport;
+            
+            // Store the direct lighthouse result for single URL analysis
+            if (routes.length === 1) {
+              setDirectLighthouseResult({
+                result: lighthouseResult,
+                url: fullUrl,
+                strategy,
+                timestamp: new Date().toISOString()
+              });
+            }
+            
+            // Update progress after completion
+            setLoadingProgress({ 
+              current: i + 1, 
+              total: routes.length, 
+              currentUrl: `${baseUrl}${route.path}` 
+            });
+            
+            // Add delay between requests
+            if (i < routes.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch (error) {
+            console.error(`Failed to analyze ${route.path} with Lighthouse:`, error);
+            results[route.path] = {
+              performance: 0,
+              accessibility: 0,
+              bestPractices: 0,
+              seo: 0,
+              fcp: 0,
+              lcp: 0,
+              cls: 0,
+              fid: 0,
+              tbt: 0,
+              si: 0,
+            };
+            
+            setLoadingProgress({ 
+              current: i + 1, 
+              total: routes.length, 
+              currentUrl: `${baseUrl}${route.path}` 
+            });
+          }
+        }
+      } else if (hasApiKey && analysisMethod === 'pagespeed') {
         // Use real PageSpeed Insights API
         for (let i = 0; i < routes.length; i++) {
           const route = routes[i];
@@ -173,9 +250,10 @@ function App() {
           
           try {
             const fullUrl = `${baseUrl.replace(/\/$/, '')}${route.path}`;
-            const { metrics, fullData } = await LighthouseService.analyzeUrlWithFullData(fullUrl, strategy);
+            const { metrics, fullData, pageSpeedInsightsUrl } = await LighthouseService.analyzeUrlWithFullData(fullUrl, strategy);
             results[route.path] = metrics;
             apiResults[route.path] = fullData;
+            pageSpeedInsightsUrls[route.path] = pageSpeedInsightsUrl;
             
             // Update progress after completion
             setLoadingProgress({ 
@@ -199,6 +277,8 @@ function App() {
               lcp: 0,
               cls: 0,
               fid: 0,
+              tbt: 0,
+              si: 0,
             };
             
             // Still update progress even on error
@@ -231,6 +311,8 @@ function App() {
             lcp: Math.random() * 2 + 2.5,
             cls: Math.random() * 0.1,
             fid: Math.random() * 50 + 50,
+            tbt: Math.random() * 200 + 100,
+            si: Math.random() * 2 + 3,
           };
           
           // Update progress after completion
@@ -250,6 +332,7 @@ function App() {
         results,
         strategy,
         fullApiResults: apiResults,
+        pageSpeedInsightsUrls,
       };
 
       setFullApiResults(apiResults);
@@ -281,6 +364,27 @@ function App() {
     }
   };
 
+  const handleStepProgression = async () => {
+    if (analysisMethod === 'lighthouse') {
+      try {
+        const isServerHealthy = await DirectLighthouseService.checkServerHealth();
+        if (!isServerHealthy) {
+          setError('Lighthouse server is not running. Please start the server at http://localhost:3001 before proceeding.');
+          return;
+        }
+      } catch {
+        setError('Unable to connect to Lighthouse server. Please ensure the server is running at http://localhost:3001');
+        return;
+      }
+    }
+    
+    if (routeType === 'custom') {
+      setStep(3);
+    } else {
+      runPerformanceTest();
+    }
+  };
+
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-600';
     if (score >= 50) return 'text-yellow-600';
@@ -305,16 +409,37 @@ function App() {
     setShowComparison(false);
     setComparisonResults([]);
     setFullApiResults({});
+    setDirectLighthouseResult(null);
+    setShowPageSpeedResults(false);
+    setShowDirectLighthouseResults(false);
   };
 
   const loadHistoryResult = (result: LighthouseResult) => {
     // Convert LighthouseResult to PerformanceResult format
+    // Add missing properties for backward compatibility
+    const convertedResults: PerformanceResult['results'] = {};
+    for (const [route, metrics] of Object.entries(result.results)) {
+      const extendedMetrics = metrics as unknown as Record<string, unknown>;
+      convertedResults[route] = {
+        ...metrics,
+        tbt: typeof extendedMetrics.tbt === 'number' ? extendedMetrics.tbt : 0,
+        si: typeof extendedMetrics.si === 'number' ? extendedMetrics.si : 0,
+      };
+    }
+    
+    const extendedResult = result as unknown as Record<string, unknown>;
     const performanceResult: PerformanceResult = {
       id: result.id,
       url: result.url,
       timestamp: result.timestamp,
       routes: result.routes,
-      results: result.results,
+      results: convertedResults,
+      strategy: typeof extendedResult.strategy === 'string' && (extendedResult.strategy === 'mobile' || extendedResult.strategy === 'desktop') 
+        ? extendedResult.strategy 
+        : 'mobile',
+      pageSpeedInsightsUrls: typeof extendedResult.pageSpeedInsightsUrls === 'object' && extendedResult.pageSpeedInsightsUrls !== null 
+        ? extendedResult.pageSpeedInsightsUrls as Record<string, string>
+        : {},
     };
     
     setCurrentResult(performanceResult);
@@ -327,6 +452,15 @@ function App() {
     setShowHistory(false);
     setShowComparison(true);
   };
+
+  // Show Core Web Vitals analysis view
+  if (showCoreWebVitals) {
+    return (
+      <CoreWebVitalsAnalysis
+        onBack={() => setShowCoreWebVitals(false)}
+      />
+    );
+  }
 
   // Show comparison view
   if (showComparison) {
@@ -348,6 +482,29 @@ function App() {
         onBack={() => setShowHistory(false)}
         onLoadResult={loadHistoryResult}
         onCompareResults={handleCompareResults}
+      />
+    );
+  }
+
+  // Show PageSpeed Insights results
+  if (showPageSpeedResults && currentResult) {
+    return (
+      <PageSpeedResults
+        result={currentResult}
+        onClose={() => setShowPageSpeedResults(false)}
+      />
+    );
+  }
+
+  // Show Direct Lighthouse results
+  if (showDirectLighthouseResults && directLighthouseResult) {
+    return (
+      <DirectLighthouseResults
+        result={directLighthouseResult.result}
+        url={directLighthouseResult.url}
+        strategy={directLighthouseResult.strategy}
+        timestamp={directLighthouseResult.timestamp}
+        onClose={() => setShowDirectLighthouseResults(false)}
       />
     );
   }
@@ -452,6 +609,7 @@ function App() {
         hasApiKey={hasApiKey}
         hasSupabase={hasSupabase}
         loadingProgress={loadingProgress}
+        analysisMethod={analysisMethod}
       />
     );
   }
@@ -472,6 +630,41 @@ function App() {
             >
               Try Again
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show Direct Lighthouse Results page
+  if (showDirectLighthouseResults && directLighthouseResult) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-6xl mx-auto">
+            <DirectLighthouseResults
+              result={directLighthouseResult.result}
+              url={directLighthouseResult.url}
+              strategy={directLighthouseResult.strategy as 'mobile' | 'desktop'}
+              timestamp={directLighthouseResult.timestamp}
+              onClose={() => setShowDirectLighthouseResults(false)}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show PageSpeed Results page
+  if (showPageSpeedResults && currentResult) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-6xl mx-auto">
+            <PageSpeedResults
+              result={currentResult}
+              onClose={() => setShowPageSpeedResults(false)}
+            />
           </div>
         </div>
       </div>
@@ -541,6 +734,31 @@ function App() {
                   <History className="h-4 w-4" />
                   <span>View History</span>
                 </button>
+                {directLighthouseResult && (
+                  <button
+                    onClick={() => setShowDirectLighthouseResults(true)}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+                  >
+                    <Activity className="h-4 w-4" />
+                    <span>Direct Lighthouse View</span>
+                  </button>
+                )}
+                {currentResult.pageSpeedInsightsUrls && Object.keys(currentResult.pageSpeedInsightsUrls).length > 0 && (
+                  <button
+                    onClick={() => setShowPageSpeedResults(true)}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                  >
+                    <Globe className="h-4 w-4" />
+                    <span>PageSpeed Insights View</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCoreWebVitals(true)}
+                  className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                >
+                  <Activity className="h-4 w-4" />
+                  <span>Core Web Vitals</span>
+                </button>
                 <button
                   onClick={resetTool}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
@@ -580,10 +798,25 @@ function App() {
             <div className="space-y-6">
               {Object.entries(currentResult.results).map(([route, metrics]) => (
                 <div key={route} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                    {currentResult.routes.find(r => r.path === route)?.name || route}
-                    <span className="text-sm text-gray-500 ml-2">({route})</span>
-                  </h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {currentResult.routes.find(r => r.path === route)?.name || route}
+                        <span className="text-sm text-gray-500 ml-2">({route})</span>
+                      </h3>
+                    </div>
+                    {currentResult.pageSpeedInsightsUrls?.[route] && (
+                      <a
+                        href={currentResult.pageSpeedInsightsUrls[route]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-2 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        <span>View Full Report</span>
+                      </a>
+                    )}
+                  </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                     {[
@@ -603,7 +836,7 @@ function App() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-blue-600">{metrics.fcp.toFixed(1)}s</div>
                       <div className="text-sm text-gray-600">First Contentful Paint</div>
@@ -619,6 +852,14 @@ function App() {
                     <div className="text-center">
                       <div className="text-2xl font-bold text-teal-600">{metrics.fid.toFixed(0)}ms</div>
                       <div className="text-sm text-gray-600">First Input Delay</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-red-600">{metrics.tbt.toFixed(0)}ms</div>
+                      <div className="text-sm text-gray-600">Total Blocking Time</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{metrics.si.toFixed(1)}s</div>
+                      <div className="text-sm text-gray-600">Speed Index</div>
                     </div>
                   </div>
                 </div>
@@ -653,9 +894,16 @@ function App() {
                 <History className="h-4 w-4" />
                 <span>View Test History</span>
               </button>
+              <button
+                onClick={() => setShowCoreWebVitals(true)}
+                className="inline-flex items-center space-x-2 text-blue-600 hover:text-blue-700 transition-colors"
+              >
+                <Activity className="h-4 w-4" />
+                <span>Core Web Vitals Analysis</span>
+              </button>
               <div className="flex items-center space-x-4 text-sm text-gray-500">
                 <div className="flex items-center space-x-2">
-                  {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4" />}
+                  {hasApiKey ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-gray-400" />}
                   <span>{hasApiKey ? 'Real API' : 'Demo Mode'}</span>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -778,6 +1026,49 @@ function App() {
                   </div>
                 </div>
 
+                {/* Analysis Method Selection */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Analysis Method</h3>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div
+                      onClick={() => setAnalysisMethod('pagespeed')}
+                      className={`p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                        analysisMethod === 'pagespeed'
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <Globe className={`h-6 w-6 ${analysisMethod === 'pagespeed' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Google PageSpeed Insights</h4>
+                          <p className="text-sm text-gray-600">Use Google's PageSpeed Insights API for analysis</p>
+                          {!hasApiKey && (
+                            <p className="text-xs text-yellow-600 mt-1">Will use demo data without API key</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setAnalysisMethod('lighthouse')}
+                      className={`p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                        analysisMethod === 'lighthouse'
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <Zap className={`h-6 w-6 ${analysisMethod === 'lighthouse' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Direct Lighthouse</h4>
+                          <p className="text-sm text-gray-600">Run Lighthouse directly via local server</p>
+                          <p className="text-xs text-blue-600 mt-1">Requires local Lighthouse server running</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Route Selection */}
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900">Routes to Test</h3>
@@ -836,7 +1127,7 @@ function App() {
                     Back
                   </button>
                   <button
-                    onClick={() => routeType === 'custom' ? setStep(3) : runPerformanceTest()}
+                    onClick={handleStepProgression}
                     className="flex-1 flex items-center justify-center space-x-2 bg-indigo-600 text-white py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors"
                   >
                     <span>{routeType === 'custom' ? 'Continue' : 'Run Test'}</span>

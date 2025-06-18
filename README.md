@@ -1,19 +1,19 @@
 # 🚀 Lighthouse Performance Tool
 
-A beautiful, production-ready web application for analyzing website performance using Google's Lighthouse API. Built with React, TypeScript, and Tailwind CSS.
+A beautiful, production-ready web application for analyzing website performance using Google's Lighthouse locally. Built with React, TypeScript, Tailwind CSS, and a Node.js backend for running Lighthouse analyses.
 
 ![Lighthouse Performance Tool](https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=1200&h=400&fit=crop&crop=center)
 
 ## ✨ Features
 
-- **🔍 Comprehensive Analysis**: Performance, Accessibility, Best Practices, and SEO audits
+- **🔍 Local Lighthouse Analysis**: Run full Lighthouse audits locally for accurate results
+- **📊 Core Web Vitals**: Detailed analysis of FCP, LCP, CLS, TBT, Speed Index, and FID
 - **📱 Mobile & Desktop Testing**: Choose between mobile and desktop analysis strategies
-- **🛣️ Multi-Route Testing**: Test multiple pages/routes in a single analysis
-- **📊 Beautiful Visualizations**: Clean, intuitive charts and progress indicators
-- **💾 Cloud Storage**: Optional Supabase integration for storing and sharing results
-- **📥 Export Results**: Download full JSON reports from Google PageSpeed Insights
-- **📈 Historical Tracking**: View and compare past test results
+- **� Performance Comparison**: Compare multiple URLs side-by-side
+- **� Full JSON Export**: Download complete Lighthouse JSON reports for analysis
+- **📈 Real-time Results**: View detailed metrics and scores in real-time
 - **🎨 Modern UI**: Beautiful, responsive design with smooth animations
+- **🚀 Fast & Reliable**: No rate limits or API restrictions
 
 ## 🚀 Quick Start
 
@@ -21,6 +21,7 @@ A beautiful, production-ready web application for analyzing website performance 
 
 - Node.js 18+ 
 - npm or yarn
+- Chrome browser (for Lighthouse analysis)
 
 ### Installation
 
@@ -30,17 +31,32 @@ A beautiful, production-ready web application for analyzing website performance 
    cd lighthouse-performance-tool
    ```
 
-2. **Install dependencies**
+2. **Install frontend dependencies**
    ```bash
    npm install
    ```
 
-3. **Start the development server**
+3. **Install backend dependencies**
+   ```bash
+   cd server
+   npm install
+   cd ..
+   ```
+
+4. **Start the backend server**
+   ```bash
+   cd server
+   npm start
+   ```
+   The server will start on `http://localhost:3001`
+
+5. **Start the frontend development server** (in a new terminal)
    ```bash
    npm run dev
    ```
+   The frontend will start on `http://localhost:5173`
 
-4. **Open your browser**
+6. **Open your browser**
    Navigate to `http://localhost:5173`
 
 ## 🔧 Configuration
